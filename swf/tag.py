@@ -1458,10 +1458,9 @@ class TagDefineFont2(TagDefineFont):
         self.languageCode = data.readLANGCODE()
 
         fontNameLen = data.readUI8()
-        fontNameRaw = BytesIO()
-        fontNameRaw.write(data.f.read(fontNameLen))
-        fontNameRaw.seek(0)
-        self.fontName = fontNameRaw.read()
+        fontNameRaw = data.f.read(fontNameLen)
+        assert fontNameRaw[-1] == 0
+        self.fontName = fontNameRaw[:-1].decode('utf-8')
 
         numGlyphs = data.readUI16()
         numSkip = 2 if self.wideOffsets else 1

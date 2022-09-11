@@ -233,15 +233,18 @@ class SWFStream(object):
         """ Read a language code """
         self.reset_bits_pending()
         return self.readUI8()
-        
+
     def readMATRIX(self):
         """ Read a SWFMatrix """
-        return SWFMatrix(self)
+        m = SWFMatrix(self)
+        self.reset_bits_pending()
+        return m
         
     def readRECT(self):
         """ Read a SWFMatrix """
         r = SWFRectangle()
         r.parse(self)
+        self.reset_bits_pending()
         return r
     
     def readSHAPE(self, unit_divisor=20):
@@ -367,12 +370,13 @@ class SWFStream(object):
         
     def readString(self):
         """ Read a string """
-        s = self.f.read(1)
-        string = b""
-        while ord(s) > 0:
-            string += s
-            s = self.f.read(1)
-        return string.decode()
+        buffer = []
+        while True:
+            b = self.f.read(1)
+            if ord(b) == 0:
+                break
+            buffer.append(b)
+        return b''.join(buffer).decode('utf-8', 'replace')
     
     def readFILTER(self):
         """ Read a SWFFilter """
