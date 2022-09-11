@@ -546,8 +546,7 @@ class SVGExporter(BaseExporter):
         return self._serialize()
 
     def _serialize(self):
-        return cStringIO(etree.tostring(self.svg,
-                encoding="UTF-8", xml_declaration=True))
+        return etree.tostring(self.svg, encoding='utf-8', xml_declaration=True)
 
     def export_define_sprite(self, tag, parent=None):
         id = "c%d"%tag.characterId
@@ -1100,10 +1099,10 @@ class SVGBounds(object):
         self._matrix = self._calc_combined_matrix()
 
 def _encode_jpeg(data):
-    return "data:image/jpeg;base64," + base64.encodestring(data)[:-1]
+    return "data:image/jpeg;base64," + base64.b64encode(data).decode('utf-8')
 
 def _encode_png(data):
-    return "data:image/png;base64," + base64.encodestring(data)[:-1]
+    return "data:image/png;base64," + base64.b64encode(data).decode('utf-8')
 
 def _swf_matrix_to_matrix(swf_matrix=None, need_scale=False, need_translate=True, need_rotation=False, unit_div=20.0):
 
