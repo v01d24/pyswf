@@ -2,13 +2,20 @@
 This module defines exporters for the SWF fileformat.
 """
 from __future__ import absolute_import
+
+from typing import Tuple
+
 from .consts import *
+from .font_exporter import FontExporter
+from .font_storage import FontStorage
 from .geom import *
+from .svg import Svg
+from .text_layout import TextLayout
 from .utils import *
 from .data import *
 from .tag import *
 from .filters import *
-from lxml import objectify
+from lxml import objectify, html
 from lxml import etree
 import base64
 from six.moves import map
@@ -24,14 +31,6 @@ import re
 import copy
 import cgi
 
-SVG_VERSION = "1.1"
-SVG_NS      = "http://www.w3.org/2000/svg"
-XLINK_NS    = "http://www.w3.org/1999/xlink"
-XLINK_HREF  = "{%s}href" % XLINK_NS
-NS = {"svg" : SVG_NS, "xlink" : XLINK_NS}
-
-PIXELS_PER_TWIP = 20
-EM_SQUARE_LENGTH = 1024
 
 MINIMUM_STROKE_WIDTH = 0.5
 
@@ -128,8 +127,7 @@ class DefaultSVGShapeExporter(DefaultShapeExporter):
         self.defs = defs
         self.current_draw_command = ""
         self.path_data = ""
-        self._e = objectify.ElementMaker(annotate=False,
-                        namespace=SVG_NS, nsmap={None : SVG_NS, "xlink" : XLINK_NS})
+        self._e = Svg.create_element_maker()
         super(DefaultSVGShapeExporter, self).__init__()
 
     def move_to(self, x, y):
@@ -292,7 +290,7 @@ class SVGShapeExporter(DefaultSVGShapeExporter):
     def export_pattern(self, bitmap_id, matrix, repeat=False, smooth=False):
         self.num_patterns += 1
         bitmap_id = "c%d" % bitmap_id
-        e = self.defs.xpath("./svg:image[@id='%s']" % bitmap_id, namespaces=NS)
+        e = self.defs.xpath("./svg:image[@id='%s']" % bitmap_id, namespaces=Svg.NS)
         if len(e) < 1:
             raise Exception("SVGShapeExporter::begin_bitmap_fill Could not find bitmap!")
         image = e[0]
@@ -307,7 +305,7 @@ class SVGShapeExporter(DefaultSVGShapeExporter):
             pattern.set("patternTransform", _swf_matrix_to_svg_matrix(matrix, True, True, True))
             pass
         use = self._e.use()
-        use.set(XLINK_HREF, "#%s" % bitmap_id)
+        use.set(Svg.xlink_prefix("href"), "#%s" % bitmap_id)
         pattern.append(use)
         self.defs.append(pattern)
 
@@ -457,6 +455,15 @@ class BaseExporter(object):
         self.shape_exporter.debug = isinstance(tag, TagDefineShape4)
         tag.shapes.export(self.shape_exporter)
 
+    def export_define_font(self, tag):
+        pass
+
+    def export_define_text(self, tag):
+        pass
+
+    def export_define_edit_text(self, tag):
+        pass
+
     def export_define_shapes(self, tags):
         for tag in tags:
             if isinstance(tag, SWFTimelineContainer):
@@ -475,6 +482,8 @@ class BaseExporter(object):
                 self.export_define_font(tag)
             elif isinstance(tag, TagDefineText):
                 self.export_define_text(tag)
+            elif isinstance(tag, TagDefineEditText):
+                self.export_define_edit_text(tag)
 
     def export_display_list(self, tags, parent=None):
         self.clip_depth = 0
@@ -505,9 +514,9 @@ class BaseExporter(object):
         return None
 
 class SVGExporter(BaseExporter):
-    def __init__(self, swf=None, margin=0):
-        self._e = objectify.ElementMaker(annotate=False,
-                        namespace=SVG_NS, nsmap={None : SVG_NS, "xlink" : XLINK_NS})
+    def __init__(self, font_storage, swf=None, margin=0):
+        self._font_storage = font_storage
+        self._e = Svg.create_element_maker()
         self._margin = margin
         super(SVGExporter, self).__init__(swf)
 
@@ -517,7 +526,7 @@ class SVGExporter(BaseExporter):
         @param swf  The SWF.
         @param force_stroke Whether to force strokes on non-stroked fills.
         """
-        self.svg = self._e.svg(version=SVG_VERSION)
+        self.svg = self._e.svg(version=Svg.SVG_VERSION)
         self.force_stroke = force_stroke
         self.defs = self._e.defs()
         self.root = self._e.g()
@@ -525,22 +534,27 @@ class SVGExporter(BaseExporter):
         self.svg.append(self.root)
         self.shape_exporter.defs = self.defs
         self._num_filters = 0
+        self._font_exporter = FontExporter(self.defs, self._font_storage)
         self.fonts = dict([(x.characterId,x) for x in swf.all_tags_of_type(TagDefineFont)])
-        self.fontInfos = dict([(x.characterId,x) for x in swf.all_tags_of_type(TagDefineFontInfo)])
 
         # GO!
         super(SVGExporter, self).export(swf, force_stroke)
 
         # Setup svg @width, @height and @viewBox
         # and add the optional margin
-        self.bounds = SVGBounds(self.svg)
-        self.svg.set("width", "%dpx" % round(self.bounds.width))
-        self.svg.set("height", "%dpx" % round(self.bounds.height))
+        frame_size = swf.header.frame_size
+        xmin = frame_size.xmin / PIXELS_PER_TWIP
+        ymin = frame_size.ymin / PIXELS_PER_TWIP
+        xmax = frame_size.xmax / PIXELS_PER_TWIP
+        ymax = frame_size.ymax / PIXELS_PER_TWIP
+        frame_width = xmax - xmin
+        frame_height = ymax - ymin
+        self.svg.set("width", "%dpx" % round(frame_width))
+        self.svg.set("height", "%dpx" % round(frame_height))
         if self._margin > 0:
             self.bounds.grow(self._margin)
-        vb = [self.bounds.minx, self.bounds.miny,
-              self.bounds.width, self.bounds.height]
-        self.svg.set("viewBox", "%s" % " ".join(map(str,vb)))
+        vb = [xmin, ymin, xmax, ymax]
+        self.svg.set("viewBox", "%s" % " ".join(map(str, vb)))
 
         # Return the SVG as StringIO
         return self._serialize()
@@ -556,107 +570,111 @@ class SVGExporter(BaseExporter):
         super(SVGExporter, self).export_define_sprite(tag, g)
 
     def export_define_font(self, tag):
-        fontInfo = self.fontInfos[tag.characterId]
-        if not fontInfo.useGlyphText:
-            return
+        self._font_exporter.export_font(tag)
 
-        defs = self._e.defs(id="font_{0}".format(tag.characterId))
-
-        for index, glyph in enumerate(tag.glyphShapeTable):
-            # Export the glyph as a shape and add the path to the "defs"
-            # element to be referenced later when exporting text.
-            code_point = fontInfo.codeTable[index]
-            pathGroup = glyph.export().g.getchildren()
-
-            if len(pathGroup):
-                path = pathGroup[0]
-
-                path.set("id", "font_{0}_{1}".format(tag.characterId, code_point))
-
-                # SWF glyphs are always defined on an EM square of 1024 by 1024 units.
-                path.set("transform", "scale({0})".format(float(1)/EM_SQUARE_LENGTH))
-
-                # We'll be setting the color on the USE element that
-                # references this element.
-                del path.attrib["stroke"]
-                del path.attrib["fill"]
-
-                defs.append(path)
-
-        self.defs.append(defs)
-
-    def export_define_text(self, tag):
+    def export_define_text(self, tag: TagDefineText) -> None:
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
-        g.set("class", "text_content")
+        g.set("data-type", "text")
+        if len(tag.records) > 0:
+            font_size = min(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
+            g.set("data-font_size_min", str(font_size))
 
-        x = 0
-        y = 0
+        x = xmin = tag.textBounds.xmin/PIXELS_PER_TWIP
+        y = ymin = tag.textBounds.ymin/PIXELS_PER_TWIP
 
         for rec in tag.records:
             if rec.hasXOffset:
-                x = rec.xOffset/PIXELS_PER_TWIP
+                x = xmin + rec.xOffset/PIXELS_PER_TWIP
             if rec.hasYOffset:
-                y = rec.yOffset/PIXELS_PER_TWIP
+                y = ymin + rec.yOffset/PIXELS_PER_TWIP
 
             size = rec.textHeight/PIXELS_PER_TWIP
-            fontInfo = self.fontInfos[rec.fontId]
-
-            if not fontInfo.useGlyphText:
-                inner_text = ""
-                xValues = []
 
             for glyph in rec.glyphEntries:
-                code_point = fontInfo.codeTable[glyph.index]
+                use = self._e.use()
+                use.set(Svg.xlink_prefix("href"), "#font_{0}_{1}".format(rec.fontId, glyph.index))
 
-                # Ignore control characters
-                if code_point in range(32):
-                    continue
+                use.set(
+                    'transform',
+                    "matrix({0},0,0,{0},{1},{2})".format(size, x, y)
+                )
 
-                if fontInfo.useGlyphText:
-                    use = self._e.use()
-                    use.set(XLINK_HREF, "#font_{0}_{1}".format(rec.fontId, code_point))
+                color = ColorUtils.to_rgb_string(ColorUtils.rgb(rec.textColor))
+                use.set("style", "fill: {0}; stroke: {0}".format(color))
 
-                    use.set(
-                        'transform',
-                        "scale({0}) translate({1} {2})".format(
-                            size, float(x)/size, float(y)/size
-                        )
-                    )
-
-                    color = ColorUtils.to_rgb_string(ColorUtils.rgb(rec.textColor))
-                    use.set("style", "fill: {0}; stroke: {0}".format(color))
-
-                    g.append(use)
-                else:
-                    inner_text += unichr(code_point)
-                    xValues.append(str(x))
+                g.append(use)
 
                 x = x + float(glyph.advance)/PIXELS_PER_TWIP
 
-            if not fontInfo.useGlyphText:
-                text = self._e.text(inner_text)
+        self.defs.append(g)
 
-                text.set("font-family", fontInfo.fontName)
-                text.set("font-size", str(size))
-                text.set("fill", ColorUtils.to_rgb_string(ColorUtils.rgb(rec.textColor)))
+    def export_define_edit_text(self, tag: TagDefineEditText) -> None:
+        g = self._e.g(id="c{0}".format(int(tag.characterId)))
+        g.set("data-type", "edit_text")
 
-                text.set("y", str(y))
-                text.set("x", " ".join(xValues))
+        text, font_size = self._extract_text_and_font_size(tag)
+        g.set("data-font_size", str(font_size))
 
-                if fontInfo.bold:
-                    text.set("font-weight", "bold")
-                if fontInfo.italic:
-                    text.set("font-style", "italic")
+        if tag.hasLayout:
+            align = tag.align
+        else:
+            align = TextLayout.ALIGN_LEFT
 
-                g.append(text)
+        if tag.hasTextColor:
+            text_color = tag.textColor
+        else:
+            text_color = 255 << 24
+
+        font = self.fonts[tag.fontId]
+        layout = TextLayout(font)
+        for char_in_layout in layout.layout_text(text, font_size, align, tag.bounds):
+            index = self._font_exporter.export_glyph_by_code(font, char_in_layout.code)
+            if index is None:
+                continue
+            use = self._e.use()
+            use.set(Svg.xlink_prefix("href"), "#font_{0}_{1}".format(tag.fontId, index))
+            x = char_in_layout.x / PIXELS_PER_TWIP
+            y = char_in_layout.y / PIXELS_PER_TWIP
+            use.set(
+                'transform',
+                "matrix({0},0,0,{0},{1},{2})".format(font_size, x, y)
+            )
+
+            color = ColorUtils.to_rgb_string(ColorUtils.rgb(text_color))
+            use.set("style", "fill: {0}; stroke: {0}".format(color))
+
+            g.append(use)
 
         self.defs.append(g)
+
+    @staticmethod
+    def _extract_text_and_font_size(edit_text: TagDefineEditText) -> Tuple[str, int]:
+        tag_text = edit_text.initialText
+        font_size = edit_text.fontHeight / PIXELS_PER_TWIP
+        if not tag_text:
+            return u'', font_size
+        if not tag_text.startswith(u'<'):
+            return tag_text, font_size
+        text_parts = []
+        tree = html.fromstring(u'<span>' + tag_text + u'</span>')
+        for elem in tree.iter():
+            if elem.tag == 'font':
+                elem_font_size = elem.get('size')
+            else:
+                elem_font_size = elem.get('font-size')
+            if elem_font_size is not None:
+                font_size = min(font_size, int(elem_font_size))
+            elem_text = elem.text.strip() if elem.text else ''
+            if elem_text:
+                text_parts.append(elem_text)
+        return u' '.join(text_parts), font_size
 
     def export_define_shape(self, tag):
         self.shape_exporter.force_stroke = self.force_stroke
         super(SVGExporter, self).export_define_shape(tag)
         shape = self.shape_exporter.g
         shape.set("id", "c%d" % tag.characterId)
+        shape.set("data-type", "shape")
         self.defs.append(shape)
 
     def export_display_list_item(self, tag, parent=None):
@@ -671,7 +689,7 @@ class SVGExporter(BaseExporter):
             self.clip_depth = tag.clipDepth
             g = self._e.mask(id=self.mask_id)
             # make sure the mask is completely filled white
-            paths = self.defs.xpath("./svg:g[@id='c%d']/svg:path" % tag.characterId, namespaces=NS)
+            paths = self.defs.xpath("./svg:g[@id='c%d']/svg:path" % tag.characterId, namespaces=Svg.NS)
             for path in paths:
                 path.set("fill", "#ffffff")
         elif tag.depth <= self.clip_depth and self.mask_id is not None:
@@ -695,7 +713,7 @@ class SVGExporter(BaseExporter):
             self.defs.append(svg_filter)
             use.set("filter", "url(#%s)" % filter_id)
 
-        use.set(XLINK_HREF, "#c%s" % tag.characterId)
+        use.set(Svg.xlink_prefix("href"), "#c%s" % tag.characterId)
         g.append(use)
 
         if is_mask:
@@ -804,23 +822,9 @@ class SVGExporter(BaseExporter):
             img.set("y", "0 ")
             img.set("width", "%s" % str(image.size[0]))
             img.set("height", "%s" % str(image.size[1]))
-            img.set(XLINK_HREF, "%s" % data_url)
+            img.set(Svg.xlink_prefix("href"), "%s" % data_url)
             self.defs.append(img)
 
-class SingleShapeSVGExporter(SVGExporter):
-    """
-    An SVG exporter which knows how to export a single shape.
-    NB: This class is here just for backward compatibility.
-    Use SingleShapeSVGExporterMixin instead to mix with other functionality.
-    """
-    def __init__(self, margin=0):
-        super(SingleShapeSVGExporter, self).__init__(margin = margin)
-
-    def export_single_shape(self, shape_tag, swf):
-        class MySingleShapeSVGExporter(SingleShapeSVGExporterMixin, SVGExporter):
-            pass
-        exporter = MySingleShapeSVGExporter()
-        return exporter.export(swf, shape=shape_tag)
 
 class SingleShapeSVGExporterMixin(object):
     def export(self, swf, shape, **export_opts):
@@ -874,15 +878,15 @@ class SingleShapeSVGExporterMixin(object):
 
         return super(SingleShapeSVGExporterMixin, self).export(stunt_swf, **export_opts)
 
-class FrameSVGExporterMixin(object):
-    def export(self, swf, frame, **export_opts):
+class FrameSVGExporter(SVGExporter):
+    def export(self, swf, **export_opts):
         """ Exports a frame of the specified SWF to SVG.
 
         @param swf   The SWF.
         @param frame Which frame to export, by 0-based index (int)
         """
-        self.wanted_frame = frame
-        return super(FrameSVGExporterMixin, self).export(swf, *export_opts)
+        self.wanted_frame = export_opts.pop('frame', 0)
+        return super(FrameSVGExporter, self).export(swf, **export_opts)
 
     def get_display_tags(self, tags, z_sorted=True):
 
@@ -906,17 +910,7 @@ class FrameSVGExporterMixin(object):
             elif isinstance(tag, TagRemoveObject):
                 del frame_tags[tag.depth]
 
-        return super(FrameSVGExporterMixin, self).get_display_tags(frame_tags.values(), z_sorted)
-
-class NamesSVGExporterMixin(object):
-    '''
-    Add class="n-<name>" to SVG elements for tags that have an instanceName.
-    '''
-    def export_display_list_item(self, tag, parent=None):
-        use = super(NamesSVGExporterMixin, self).export_display_list_item(tag, parent)
-        if hasattr(tag, 'instanceName') and tag.instanceName is not None:
-            use.set('class', 'n-%s' % tag.instanceName)
-        return use
+        return super(FrameSVGExporter, self).get_display_tags(frame_tags.values(), z_sorted)
 
 
 class SVGFilterFactory(object):
@@ -982,121 +976,6 @@ class SVGFilterFactory(object):
         if result is not None:
             offset.set("result", result)
         return offset
-
-class SVGBounds(object):
-    def __init__(self, svg=None):
-        self.minx = 1000000.0
-        self.miny = 1000000.0
-        self.maxx = -self.minx
-        self.maxy = -self.miny
-        self._stack = []
-        self._matrix = self._calc_combined_matrix()
-        if svg is not None:
-            self._svg = svg;
-            self._parse(svg)
-
-    def add_point(self, x, y):
-        self.minx = x if x < self.minx else self.minx
-        self.miny = y if y < self.miny else self.miny
-        self.maxx = x if x > self.maxx else self.maxx
-        self.maxy = y if y > self.maxy else self.maxy
-
-    def set(self, minx, miny, maxx, maxy):
-        self.minx = minx
-        self.miny = miny
-        self.maxx = maxx
-        self.maxy = maxy
-
-    def grow(self, margin):
-        self.minx -= margin
-        self.miny -= margin
-        self.maxx += margin
-        self.maxy += margin
-
-    @property
-    def height(self):
-        return self.maxy - self.miny
-
-    def merge(self, other):
-        self.minx = other.minx if other.minx < self.minx else self.minx
-        self.miny = other.miny if other.miny < self.miny else self.miny
-        self.maxx = other.maxx if other.maxx > self.maxx else self.maxx
-        self.maxy = other.maxy if other.maxy > self.maxy else self.maxy
-
-    def shrink(self, margin):
-        self.minx += margin
-        self.miny += margin
-        self.maxx -= margin
-        self.maxy -= margin
-
-    @property
-    def width(self):
-        return self.maxx - self.minx
-
-    def _parse(self, element):
-
-        if element.get("transform") and element.get("transform").find("matrix") < 0:
-            pass
-
-        if element.get("transform") and element.get("transform").find("matrix") >= 0:
-            self._push_transform(element.get("transform"))
-
-        if element.tag == "{%s}path" % SVG_NS:
-            self._handle_path_data(str(element.get("d")))
-        elif element.tag == "{%s}use" % SVG_NS:
-            href = element.get(XLINK_HREF)
-            if href:
-                href = href.replace("#", "")
-                els = self._svg.xpath("./svg:defs//svg:g[@id='%s']" % href,
-                        namespaces=NS)
-                if len(els) > 0:
-                    self._parse(els[0])
-
-        for child in element.getchildren():
-            if child.tag == "{%s}defs" % SVG_NS: continue
-            self._parse(child)
-
-        if element.get("transform") and element.get("transform").find("matrix") >= 0:
-            self._pop_transform()
-
-    def _build_matrix(self, transform):
-        if transform.find("matrix") >= 0:
-            raw = str(transform).replace("matrix(", "").replace(")", "")
-            f = list(map(float, re.split("\s+|,", raw)))
-            return Matrix2(f[0], f[1], f[2], f[3], f[4], f[5])
-
-    def _calc_combined_matrix(self):
-        m = Matrix2()
-        for mat in self._stack:
-            m.append_matrix(mat)
-        return m
-
-    def _handle_path_data(self, d):
-        parts = re.split("[\s]+", d)
-        for i in range(0, len(parts), 2):
-            try:
-                p0 = parts[i]
-                p1 = parts[i+1]
-                p0 = p0.replace("M", "").replace("L", "").replace("Q", "")
-                p1 = p1.replace("M", "").replace("L", "").replace("Q", "")
-
-                v = [float(p0), float(p1)]
-                w = self._matrix.multiply_point(v)
-                self.minx = w[0] if w[0] < self.minx else self.minx
-                self.miny = w[1] if w[1] < self.miny else self.miny
-                self.maxx = w[0] if w[0] > self.maxx else self.maxx
-                self.maxy = w[1] if w[1] > self.maxy else self.maxy
-            except:
-                continue
-
-    def _pop_transform(self):
-        m = self._stack.pop()
-        self._matrix = self._calc_combined_matrix()
-        return m
-
-    def _push_transform(self, transform):
-        self._stack.append(self._build_matrix(transform))
-        self._matrix = self._calc_combined_matrix()
 
 def _encode_jpeg(data):
     return "data:image/jpeg;base64," + base64.b64encode(data).decode('utf-8')

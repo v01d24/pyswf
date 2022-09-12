@@ -1,3 +1,6 @@
+PIXELS_PER_TWIP = 20
+EM_SQUARE_LENGTH = 1024
+
 
 class Enum(object):
     @classmethod
