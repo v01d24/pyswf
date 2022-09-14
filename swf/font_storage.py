@@ -25,6 +25,15 @@ class FontStorage:
         self._font_storage_dir = font_storage_dir
         self._fonts = self._get_available_fonts()
 
+    def __getstate__(self):
+        return {
+            '_font_storage_dir': self._font_storage_dir
+        }
+
+    def __setstate__(self, state):
+        self._font_storage_dir = state['_font_storage_dir']
+        self._fonts = self._get_available_fonts()
+
     def _get_available_fonts(self) -> Dict[str, 'Font']:
         fonts = {}
         if not os.path.exists(self._font_storage_dir):
@@ -50,6 +59,17 @@ class FontStorage:
 class Font:
     def __init__(self, font_dir: str) -> None:
         self._font_dir = font_dir
+        self._glyph_paths = self._get_available_glyph_paths()
+        self._glyphs = {}
+        self._glyph_advances = self._read_advances()
+
+    def __getstate__(self):
+        return {
+            '_font_dir': self._font_dir
+        }
+
+    def __setstate__(self, state):
+        self._font_dir = state['_font_dir']
         self._glyph_paths = self._get_available_glyph_paths()
         self._glyphs = {}
         self._glyph_advances = self._read_advances()
