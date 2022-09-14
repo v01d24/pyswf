@@ -8,11 +8,7 @@ from typing import Optional, List
 from arg_utils import add_source_args, get_source_paths
 from swf.font_storage import FontStorage
 from swf.movie import SWF
-from swf.export import SVGExporter, FrameSVGExporterMixin
-
-
-class FrameSVGExporter(FrameSVGExporterMixin, SVGExporter):
-    pass
+from swf.export import FrameSVGExporter
 
 
 class Converter:
@@ -48,7 +44,7 @@ class Converter:
 
     def export_svg(self, swf: SWF, frame: int, dir_out: str, filename: str) -> None:
         path_out = os.path.join(dir_out, filename)
-        svg = self._exporter.export(swf, frame)
+        svg = self._exporter.export(swf, frame=frame)
         with open(path_out, 'wb') as f_out:
             f_out.write(svg)
 
