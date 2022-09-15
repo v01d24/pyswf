@@ -565,6 +565,7 @@ class SVGExporter(BaseExporter):
     def export_define_sprite(self, tag, parent=None):
         id = "c%d"%tag.characterId
         g = self._e.g(id=id)
+        g.set("data-type", "sprite")
         self.defs.append(g)
         self.clip_depth = 0
         super(SVGExporter, self).export_define_sprite(tag, g)
@@ -575,9 +576,15 @@ class SVGExporter(BaseExporter):
     def export_define_text(self, tag: TagDefineText) -> None:
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
         g.set("data-type", "text")
+        g.set("data-bounds", self.serialize_bounds(tag.textBounds))
         if len(tag.records) > 0:
-            font_size = min(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
-            g.set("data-font_size_min", str(font_size))
+            font_size_min = min(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
+            font_size_max = max(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
+            if font_size_min == font_size_max:
+                g.set("data-font_size", str(font_size_min))
+            else:
+                g.set("data-font_size_min", str(font_size_min))
+                g.set("data-font_size_max", str(font_size_max))
 
         x = xmin = tag.textBounds.xmin/PIXELS_PER_TWIP
         y = ymin = tag.textBounds.ymin/PIXELS_PER_TWIP
@@ -611,6 +618,7 @@ class SVGExporter(BaseExporter):
     def export_define_edit_text(self, tag: TagDefineEditText) -> None:
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
         g.set("data-type", "edit_text")
+        g.set("data-bounds", self.serialize_bounds(tag.bounds))
 
         text, font_size = self._extract_text_and_font_size(tag)
         g.set("data-font_size", str(font_size))
@@ -675,6 +683,7 @@ class SVGExporter(BaseExporter):
         shape = self.shape_exporter.g
         shape.set("id", "c%d" % tag.characterId)
         shape.set("data-type", "shape")
+        shape.set("data-bounds", self.serialize_bounds(tag.shape_bounds))
         self.defs.append(shape)
 
     def export_display_list_item(self, tag, parent=None):
@@ -824,6 +833,15 @@ class SVGExporter(BaseExporter):
             img.set("height", "%s" % str(image.size[1]))
             img.set(Svg.xlink_prefix("href"), "%s" % data_url)
             self.defs.append(img)
+
+    @staticmethod
+    def serialize_bounds(bounds):
+        return '{} {} {} {}'.format(
+            bounds.xmin / PIXELS_PER_TWIP,
+            bounds.ymin / PIXELS_PER_TWIP,
+            bounds.xmax / PIXELS_PER_TWIP,
+            bounds.ymax / PIXELS_PER_TWIP
+        )
 
 
 class SingleShapeSVGExporterMixin(object):
