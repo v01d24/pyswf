@@ -1,71 +1,56 @@
-PYSWF
-=====
-A Python library for reading and writing SWF files.
-PYSWF is a Python port of Claus Wahlers *great* SWF parser https://github.com/claus/as3swf
-Can't thank Claus enough!
+# swf2svg
+Преобразует SWF файлы в SVG. Краткое описание формата можно посмотреть 
+[здесь](FORMAT_REFERENCE.md).
+Ошибки, возникающие во время работы, выводятся в стандартный поток, но не прекращают работу скрипта.
 
-[![Build Status](https://travis-ci.org/timknip/pyswf.svg)](https://travis-ci.org/timknip/pyswf)
+### Параметры:
+- `--in` - путь к SWF файлу
+- `--list` - путь к файлу со списком SWF файлов в отдельных строках
+- `--dir` - путь к директории с SWF файлами
+- `--out` - путь к директории для SVG файлов
+- `--frame` - номер кадра для извлечения. Если номер не указан и в файле определено несколько кадров, будет создана
+директория с именем файла, в которой будут сохранены изображения по кадрам.
+- `--fonts` - путь к директории со шрифтами, полученными с помощью `extract_fonts`
 
-INSTALL
--------
+### Пример использования
+Преобразовать файл in/SZ08-10-5.rar без обработки, сохранить результат в директорию tmp с тем же именем:
 
-    $ pip install pyswf==1.5.4
+`python3 swf2svg.py --in in/SZ08-10-5.rar --out tmp/`
 
-or:
+### Проблемы
+**1) Неполные шрифты**
 
-    $ git clone git@github.com:timknip/pyswf.git
-    $ cd pyswf
-    $ python setup.py install
+При преобразовании может возникнуть ситуация, когда в шрифте, определённом в файле, недостаточно символов для вывода
+строки, и файл не будет сконвертирован. Чтобы снизить вероятность этого, можно воспользоваться скриптом `extract_fonts`,
+который извлечёт шрифты из указанных файлов. Их можно будет передать утилите `swf2svg` в параметре `--fonts`.
 
-or you might need do:
+# extract_fonts
+Извлекает шрифты из SWF файлов в указанную директорию.
+Ошибки, возникающие во время работы скрипта, выводятся в стандартный поток, но не прекращают работу скрипта.
 
-    $ sudo python setup.py install
+### Параметры:
+- `--in` - путь к SWF файлу
+- `--list` - путь к файлу со списком SWF файлов
+- `--dir` - путь к директории с SWF файлами
+- `--out` - путь к директории для извлечённых шрифтов
 
-WINDOWS
--------
-Install Pillow, lxml and pylzma from a binary distribution before running setup.
-- [Pillow 2.9.0](http://www.lfd.uci.edu/~gohlke/pythonlibs/#pillow)
-- [lxml 3.4.0](https://pypi.python.org/pypi/lxml/3.4.0#downloads)
-- [pylzma 0.4.6](http://www.lfd.uci.edu/~gohlke/pythonlibs/#pylzma)
+Шрифты хранятся в виде отдельных SVG файлов для каждого символа. Например, в `fonts/SimHei/65.svg` будет храниться 
+векторное изображение символа `A` (код ascii - 65) шрифта SimHei.
 
-Installing the *.whl files:
+# clean_svg
+Удаляет мусор из схем: заголовки (только те, которые определены в текстовых тегах), стрелки, логотипы, рамки.
 
-    $ pip install the-downloaded.whl
-
-USAGE
------
-
-Basic example:
---------------
-```python
-from swf.movie import SWF
-
-# create a file object
-file = open('path/to/swf', 'rb')
-
-# print out the SWF file structure
-print SWF(file)
-```
+### Параметры:
+- `--in` - путь к SVG файлу
+- `--list` - путь к файлу со списком SVG файлов
+- `--dir` - путь к директории с SVG файлами
+- `--out` - путь к директории для очищенных SVG файлов
 
 
-SVG export example:
--------------------
-```python
-from swf.movie import SWF
-from swf.export import SVGExporter
-
-# create a file object
-file = open('path/to/swf', 'rb')
-
-# load and parse the SWF
-swf = SWF(file)
-
-# create the SVG exporter
-svg_exporter = SVGExporter()
-
-# export!
-svg = swf.export(svg_exporter)
-
-# save the SVG
-open('path/to/svg', 'wb').write(svg.read())
-```
+# Библиотека pyswf
+Исходный код библиотеки pyswf: https://github.com/timknip/pyswf.
+Изменения в данном форке:
+- исправлено чтение сжатых файлов
+- добавлено выравнивание по байтам после чтения матриц и прямоугольников, иначе теги читались неправильно
+- улучшено определение разрешения SVG файла по содержимому
+- поддержка 3-го питона (исправлено чтение строк, кодирование растровых изображений, сериализация в svg)
