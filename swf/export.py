@@ -404,7 +404,6 @@ class BaseExporter(object):
         self.export_display_list(self.get_display_tags(swf.tags))
 
     def export_define_bits(self, tag):
-        png_buffer = BytesIO()
         image = None
         if isinstance(tag, TagDefineBitsJPEG3):
 
@@ -414,17 +413,11 @@ class BaseExporter(object):
             tag.bitmapAlphaData.seek(0)
             image = Image.open(tag.bitmapData)
             if num_alpha > 0:
-                image_width = image.size[0]
-                image_height = image.size[1]
-                image_data = image.getdata()
-                image_data_len = len(image_data)
-                if num_alpha == image_data_len:
-                    buff = b""
-                    for i in range(0, num_alpha):
-                        alpha = ord(tag.bitmapAlphaData.read(1))
-                        rgb = list(image_data[i])
-                        buff += struct.pack("BBBB", rgb[0], rgb[1], rgb[2], alpha)
-                    image = Image.frombytes("RGBA", (image_width, image_height), buff)
+                image_width, image_height = image.size
+                if num_alpha == image_width * image_height:
+                    alpha_data = tag.bitmapAlphaData.read(num_alpha)
+                    alpha_layer = Image.frombytes('L', image.size, alpha_data)
+                    image.putalpha(alpha_layer)
         elif isinstance(tag, TagDefineBitsJPEG2):
             tag.bitmapData.seek(0)
             image = Image.open(tag.bitmapData)
