@@ -570,26 +570,27 @@ class SVGExporter(BaseExporter):
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
         g.set("data-type", "text")
         g.set("data-bounds", self.serialize_bounds(tag.textBounds))
-        if len(tag.records) > 0:
-            font_size_min = min(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
-            font_size_max = max(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
-            if font_size_min == font_size_max:
-                g.set("data-font_size", str(font_size_min))
-            else:
-                g.set("data-font_size_min", str(font_size_min))
-                g.set("data-font_size_max", str(font_size_max))
 
-        x = xmin = tag.textBounds.xmin/PIXELS_PER_TWIP
-        y = ymin = tag.textBounds.ymin/PIXELS_PER_TWIP
+        assert tag.textMatrix.scaleX == 1
+        assert tag.textMatrix.rotateSkew0 == 0
+        assert tag.textMatrix.rotateSkew1 == 0
+        assert tag.textMatrix.scaleY == 1
+
+        font_sizes = set()
+        font_ids = set()
+
+        x = tag.textBounds.xmin/PIXELS_PER_TWIP
+        y = tag.textBounds.ymin/PIXELS_PER_TWIP
 
         for rec in tag.records:
-            if rec.hasXOffset:
-                x = xmin + rec.xOffset/PIXELS_PER_TWIP
-            if rec.hasYOffset:
-                y = ymin + rec.yOffset/PIXELS_PER_TWIP
-
             size = rec.textHeight/PIXELS_PER_TWIP
+            font_sizes.add(size)
+            font_ids.add(rec.fontId)
 
+            if rec.hasXOffset:
+                x = (rec.xOffset + tag.textMatrix.translateX) / PIXELS_PER_TWIP
+            if rec.hasYOffset:
+                y = (rec.yOffset + tag.textMatrix.translateY) / PIXELS_PER_TWIP
             for glyph in rec.glyphEntries:
                 use = self._e.use()
                 use.set(Svg.xlink_prefix("href"), "#font_{0}_{1}".format(rec.fontId, glyph.index))
@@ -606,6 +607,19 @@ class SVGExporter(BaseExporter):
 
                 x = x + float(glyph.advance)/PIXELS_PER_TWIP
 
+        if len(font_sizes) == 1:
+            font_size = next(iter(font_sizes))
+            g.set("data-font_size", str(font_size))
+        elif len(font_sizes) > 1:
+            font_size_min = min(font_sizes)
+            font_size_max = max(font_sizes)
+            g.set("data-font_size_min", str(font_size_min))
+            g.set("data-font_size_max", str(font_size_max))
+        if len(font_ids) == 1:
+            font_id = next(iter(font_ids))
+            font = self.fonts.get(font_id)
+            if isinstance(font, TagDefineFont2):
+                g.set("data-font_name", font.fontName or '')
         self.defs.append(g)
 
     def export_define_edit_text(self, tag: TagDefineEditText) -> None:
@@ -627,6 +641,7 @@ class SVGExporter(BaseExporter):
             text_color = 255 << 24
 
         font = self.fonts[tag.fontId]
+        g.set("data-font_name", font.fontName or '')
         layout = TextLayout(font)
         for char_in_layout in layout.layout_text(text, font_size, align, tag.bounds):
             index = self._font_exporter.export_glyph_by_code(font, char_in_layout.code)

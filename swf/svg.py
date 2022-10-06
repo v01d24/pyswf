@@ -217,11 +217,47 @@ class TextGroup(SizedSvgElement):
             return None
         return float(min_font_size_str)
 
+    def get_font_name(self):
+        return self._elem.get('data-font_name')
+
     def get_font_size(self) -> Optional[float]:
         font_size_str = self._elem.get('data-font_size')
         if StringUtils.is_empty(font_size_str):
             return None
         return float(font_size_str)
+
+    def set_font_size(self, target_font_size: float) -> None:
+        bounds = self.bounds
+        center_x = (bounds.x_max + bounds.x_min) / 2
+        center_y = (bounds.y_max + bounds.y_min) / 2
+        font_size = self.get_font_size() or self.get_font_size_max()
+        if font_size is None:
+            return
+        scale = target_font_size / font_size
+        for use_elem in self._elem:
+            self._scale_element(use_elem, center_x, center_y, scale)
+        self._scale_element_attribute(self._elem, 'data-font_size', scale)
+        self._scale_element_attribute(self._elem, 'data-font_size_min', scale)
+        self._scale_element_attribute(self._elem, 'data-font_size_max', scale)
+
+    def _scale_element(self, elem: _Element, center_x: float, center_y: float, scale: float):
+        global_matrix = MatrixParser.parse(elem.get('transform'), self.matrix)
+        scaled_x = center_x + (global_matrix.tx - center_x) * scale
+        scaled_y = center_y + (global_matrix.ty - center_y) * scale
+        matrix = MatrixParser.parse(elem.get('transform'), None)
+        matrix.a = matrix.a * scale
+        matrix.d = matrix.d * scale
+        matrix.tx += (scaled_x - global_matrix.tx) / self.matrix.a
+        matrix.ty += (scaled_y - global_matrix.ty) / self.matrix.d
+        elem.set('transform', MatrixSerializer.serialize(matrix))
+
+    @staticmethod
+    def _scale_element_attribute(elem: _Element, attr_name: str, scale: float):
+        attr_string = elem.attrib.get(attr_name)
+        if attr_string is None:
+            return
+        attr_value = float(attr_string) * scale
+        elem.attrib[attr_name] = str(attr_value)
 
     def get_text_length(self):
         return len(self._elem.getchildren())
@@ -325,8 +361,16 @@ class MatrixParser:
         a, b, c, d, tx, ty = [float(f.strip()) for f in matrix_args.split(',')]
         matrix = Matrix2(a, b, c, d, tx, ty)
         if parent_matrix is not None:
-            matrix.append_matrix(parent_matrix)
+            matrix.prepend_matrix(parent_matrix)
         return matrix
+
+
+class MatrixSerializer:
+    @classmethod
+    def serialize(cls, matrix: Matrix2):
+        return 'matrix({},{},{},{},{},{})'.format(
+            matrix.a, matrix.b, matrix.c, matrix.d, matrix.tx, matrix.ty
+        )
 
 
 class PathParser:
