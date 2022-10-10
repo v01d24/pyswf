@@ -252,8 +252,8 @@ class TextGroup(SizedSvgElement):
         matrix = MatrixParser.parse(elem.get('transform'), None)
         matrix.a = matrix.a * scale
         matrix.d = matrix.d * scale
-        matrix.tx += (scaled_x - global_matrix.tx) / self.matrix.a
-        matrix.ty += (scaled_y - global_matrix.ty) / self.matrix.d
+        #matrix.tx += (scaled_x - global_matrix.tx) / self.matrix.a
+        #matrix.ty += (scaled_y - global_matrix.ty) / self.matrix.d
         elem.set('transform', MatrixSerializer.serialize(matrix))
 
     @staticmethod
