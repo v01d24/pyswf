@@ -108,7 +108,7 @@ class Definitions:
         if elem_type == 'shape':
             return ShapeGroup(elem, parent_matrix, self)
         elif elem_type in ('text', 'edit_text'):
-            return TextGroup(elem, parent_matrix)
+            return TextGroup(elem, parent_matrix, self)
         elif elem_type == 'sprite':
             return ContainerGroup(elem, parent_matrix, self)
         return StubGroup(elem)
@@ -211,6 +211,11 @@ class ShapeGroup(SizedSvgElement):
 
 
 class TextGroup(SizedSvgElement):
+    def __init__(self, elem, parent_matrix: Optional[Matrix2], definitions: Definitions):
+        super().__init__(elem, parent_matrix)
+        self._definitions = definitions
+        self._length = None
+
     def get_font_size_max(self) -> Optional[float]:
         min_font_size_str = self._elem.get('data-font_size_max')
         if StringUtils.is_empty(min_font_size_str):
@@ -260,7 +265,15 @@ class TextGroup(SizedSvgElement):
         elem.attrib[attr_name] = str(attr_value)
 
     def get_text_length(self):
-        return len(self._elem.getchildren())
+        if self._length is not None:
+            return self._length
+        length = 0
+        for child in self._elem.getchildren():
+            child_id = child.get(Svg.xlink_prefix('href'))[1:]
+            if self._definitions.get(child_id, None) is not None:
+                length += 1
+        self._length = length
+        return self._length
 
 
 class Image(SvgElement):
