@@ -1,6 +1,6 @@
 import string
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 
 from lxml import etree
 from lxml.etree import _ElementTree, _Element
@@ -8,7 +8,6 @@ from lxml.objectify import ElementMaker
 
 from swf.geom import Matrix2
 from swf.utils import StringUtils
-
 
 Filling = Union[None, str, 'LinearGradient', 'Pattern']
 
@@ -84,7 +83,19 @@ class Definitions:
     __slots__ = ('_definitions',)
 
     def __init__(self, elem: Optional[_Element]) -> None:
-        self._definitions = {e.get('id'): e for e in elem}
+        self._definitions = {}
+        if elem is not None:
+            self._index_children(elem, self._definitions)
+
+    @classmethod
+    def _index_children(cls, elem: _Element, definitions_map: Dict[str, _Element]):
+        for child_elem in elem:
+            child_id = child_elem.get('id')
+            if child_id is None:
+                continue
+            definitions_map[child_id] = child_elem
+            if child_elem.tag == Svg.svg_prefix('g'):
+                cls._index_children(child_elem, definitions_map)
 
     def get(self, id_: str, parent_matrix: Optional[Matrix2]) -> Optional['SvgElement']:
         elem = self._definitions.get(id_)
@@ -108,7 +119,7 @@ class Definitions:
         if elem_type == 'shape':
             return ShapeGroup(elem, parent_matrix, self)
         elif elem_type in ('text', 'edit_text'):
-            return TextGroup(elem, parent_matrix)
+            return TextGroup(elem, parent_matrix, self)
         elif elem_type == 'sprite':
             return ContainerGroup(elem, parent_matrix, self)
         return StubGroup(elem)
@@ -130,7 +141,7 @@ class SizedSvgElement(SvgElement):
 
     def __init__(self, elem, parent_matrix: Optional[Matrix2]):
         super().__init__(elem)
-        self._matrix = MatrixParser.parse(elem.get('transform'), parent_matrix)
+        self._matrix = TransformParser.parse(elem.get('transform'), parent_matrix)
         self._bounds = RectParser.parse(elem.get('data-bounds'), self._matrix)
 
     @property
@@ -180,7 +191,7 @@ class DisplayGroup(SizedSvgElement):
         child_elem = child_elements[0]
         assert child_elem.tag == Svg.svg_prefix('use')
         referenced_id = child_elem.get(Svg.xlink_prefix('href'))[1:]
-        use_matrix = MatrixParser.parse(child_elem.get('transform'), self.matrix)
+        use_matrix = TransformParser.parse(child_elem.get('transform'), self.matrix)
         definition = self._definitions.get(referenced_id, use_matrix)
         assert definition is None or isinstance(definition, SizedSvgElement)
         self._definition_initialized = True
@@ -211,6 +222,13 @@ class ShapeGroup(SizedSvgElement):
 
 
 class TextGroup(SizedSvgElement):
+    def __init__(self, elem, parent_matrix: Optional[Matrix2], definitions: Definitions) -> None:
+        super().__init__(elem, parent_matrix)
+        self._definitions = definitions
+        self._char_paths = None
+        self._trimmed_length = None
+        self._real_bounds = None
+
     def get_font_size_max(self) -> Optional[float]:
         min_font_size_str = self._elem.get('data-font_size_max')
         if StringUtils.is_empty(min_font_size_str):
@@ -227,7 +245,7 @@ class TextGroup(SizedSvgElement):
         return float(font_size_str)
 
     def set_font_size(self, target_font_size: float) -> None:
-        bounds = self.bounds
+        bounds = self.get_real_bounds()
         center_x = (bounds.x_max + bounds.x_min) / 2
         center_y = (bounds.y_max + bounds.y_min) / 2
         font_size = self.get_font_size() or self.get_font_size_max()
@@ -241,10 +259,10 @@ class TextGroup(SizedSvgElement):
         self._scale_element_attribute(self._elem, 'data-font_size_max', scale)
 
     def _scale_element(self, elem: _Element, center_x: float, center_y: float, scale: float):
-        global_matrix = MatrixParser.parse(elem.get('transform'), self.matrix)
+        global_matrix = TransformParser.parse(elem.get('transform'), self.matrix)
         scaled_x = center_x + (global_matrix.tx - center_x) * scale
         scaled_y = center_y + (global_matrix.ty - center_y) * scale
-        matrix = MatrixParser.parse(elem.get('transform'), None)
+        matrix = TransformParser.parse(elem.get('transform'), None)
         matrix.a = matrix.a * scale
         matrix.d = matrix.d * scale
         matrix.tx += (scaled_x - global_matrix.tx) / self.matrix.a
@@ -259,8 +277,60 @@ class TextGroup(SizedSvgElement):
         attr_value = float(attr_string) * scale
         elem.attrib[attr_name] = str(attr_value)
 
-    def get_text_length(self):
+    def get_text_length(self) -> int:
         return len(self._elem.getchildren())
+
+    def get_trimmed_text_length(self) -> int:
+        if self._trimmed_length is not None:
+            return self._trimmed_length
+        first_non_space = None
+        last_non_space = None
+        for index, path in enumerate(self.get_char_paths()):
+            if path.is_empty():  # empty path is space
+                continue
+            if first_non_space is None:
+                first_non_space = index
+            last_non_space = index
+        if first_non_space is None:
+            self._trimmed_length = 0
+        else:
+            self._trimmed_length = last_non_space - first_non_space + 1
+        return self._trimmed_length
+
+    def get_real_bounds(self) -> 'Rect':
+        if self._real_bounds is not None:
+            return self._real_bounds
+        paths = self.get_char_paths()
+        if len(paths) == 0:
+            self._real_bounds = Rect(0, 0, 0, 0)
+            return self._real_bounds
+        matrix = paths[0].matrix
+        x_min = x_max = matrix.tx
+        y_min = y_max = matrix.ty
+        for path in self.get_char_paths():
+            matrix = path.matrix
+            x_min = min(x_min, matrix.tx)
+            y_min = min(y_min, matrix.ty)
+            x_max = min(x_max, matrix.tx)
+            y_max = min(y_max, matrix.ty)
+        font_size = self.get_font_size() or self.get_font_size_max() or 0
+        self._real_bounds = Rect(x_min, y_min - font_size, x_max + font_size, y_min)
+        return self._real_bounds
+
+    def get_char_paths(self):
+        if self._char_paths is not None:
+            return self._char_paths
+        char_paths = []
+        for use_elem in self._elem.getchildren():
+            reference_id = use_elem.get(Svg.xlink_prefix('href'))[1:]
+            use_matrix = TransformParser.parse(use_elem.get('transform'), self.matrix)
+            path = self._definitions.get(reference_id, use_matrix)
+            if path is None:
+                continue
+            assert isinstance(path, Path)
+            char_paths.append(path)
+        self._char_paths = char_paths
+        return char_paths
 
 
 class Image(SvgElement):
@@ -337,6 +407,9 @@ class Path(SizedSvgElement):
         self._filling_initialized = True
         self._filling = filling
 
+    def is_empty(self):
+        return StringUtils.is_empty(self._elem.get('d'))
+
     def get_commands(self) -> List['Command']:
         if self._commands is not None:
             return self._commands
@@ -349,17 +422,31 @@ class Path(SizedSvgElement):
         self._commands = commands
 
 
-class MatrixParser:
+class TransformParser:
     @classmethod
     def parse(cls, s: Optional[str], parent_matrix: Optional[Matrix2]) -> Optional[Matrix2]:
         if StringUtils.is_empty(s):
             return parent_matrix
-        if not s.startswith('matrix(') or not s.endswith(')'):
-            msg = 'Invalid matrix: {}'.format(s)
-            raise ValueError(msg)
+        if s.startswith('matrix('):
+            return cls._parse_matrix(s, parent_matrix)
+        if s.startswith('scale('):
+            return cls._parse_scale(s, parent_matrix)
+        msg = 'Invalid matrix: {}'.format(s)
+        raise ValueError(msg)
+
+    @classmethod
+    def _parse_matrix(cls, s: Optional[str], parent_matrix: Optional[Matrix2]) -> Optional[Matrix2]:
         matrix_args = s[7:-1]
         a, b, c, d, tx, ty = [float(f.strip()) for f in matrix_args.split(',')]
         matrix = Matrix2(a, b, c, d, tx, ty)
+        if parent_matrix is not None:
+            matrix.prepend_matrix(parent_matrix)
+        return matrix
+
+    @classmethod
+    def _parse_scale(cls, s: Optional[str], parent_matrix: Optional[Matrix2]) -> Optional[Matrix2]:
+        scale = float(s[6:-1])
+        matrix = Matrix2(scale, 0, 0, scale, 0, 0)
         if parent_matrix is not None:
             matrix.prepend_matrix(parent_matrix)
         return matrix
@@ -585,3 +672,4 @@ class Rect:
                     y_min=self.y_min - margin,
                     x_max=self.x_max + margin,
                     y_max=self.y_max + margin)
+
