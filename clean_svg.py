@@ -14,22 +14,9 @@ from swf.svg import Svg, ContainerGroup, DisplayGroup, ShapeGroup, TextGroup, Pa
 class TextGroupInfo(NamedTuple):
     display_group: DisplayGroup
     text_group: TextGroup
+    font_size: float
     x: float
     y: float
-
-
-class PathSignature:
-    def __init__(self, **kwargs) -> None:
-        self._kwargs = kwargs
-
-    def get_hash(self) -> int:
-        return hash(frozenset(self._kwargs.items()))
-
-    def match(self, path: Path) -> bool:
-        for key, value in self._kwargs.items():
-            if path.elem.get(key) != value:
-                return False
-        return True
 
 
 class SvgCleaner:
@@ -131,26 +118,33 @@ class SvgCleaner:
         return False
 
     def _clean_text(self, display_group: DisplayGroup, text_group: TextGroup) -> bool:
-        text_size = text_group.get_font_size() or text_group.get_font_size_max()
-        if text_size is None:  # пустой текст
+        font_size = text_group.get_font_size() or text_group.get_font_size_max()
+        if font_size is None:  # пустой текст
             return False
         text_width = text_group.bounds.get_width()
-        if text_size >= 14 and text_width >= 200:  # заголовки, подписи
-            return True
-        if text_size <= 14 and text_width < 280:  # артикул
+        font_name = text_group.get_font_name()
+        is_schema_text = font_name in ('Adobe Song Std L', 'Arial')
+        if is_schema_text:  # надписи, которые нужно оставить: логотипы, таблички
             return False
-        text_length = text_group.get_text_length()
+        if font_size >= 14 and text_width >= 200:  # заголовки, подписи
+            return True
+        if font_size <= 14 and text_width < 280:  # артикул
+            return False
+        text_length = text_group.get_trimmed_text_length()
         if text_length == 1 and text_group.bounds is not None:
             # текст может быть разделён по символам, поэтому текстовые объекты с одним символом
             # группируются по координате y, чтобы потом объединить в строки
             text_group_info = TextGroupInfo(
                 display_group=display_group,
                 text_group=text_group,
+                font_size=font_size,
                 x=text_group.matrix.tx,
                 y=text_group.matrix.ty
             )
             self._text_groups_by_y[text_group_info.y].append(text_group_info)
-        if text_length <= 2:  # число
+        if text_length <= 2:  # сноска с числом
+            if font_size > 12:
+                text_group.set_font_size(12)
             return False
         return True
 
@@ -164,7 +158,7 @@ class SvgCleaner:
             text_groups_in_a_line = [grouped_info[0]]
             for text_group_info in grouped_info[1:]:
                 is_line_break = False
-                font_size = text_group_info.text_group.get_font_size()
+                font_size = text_group_info.font_size
                 if font_size is None:
                     is_line_break = True
                 min_char_width = font_size / 2.0
