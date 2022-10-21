@@ -7,7 +7,6 @@ from typing import Tuple
 
 from .consts import *
 from .font_exporter import FontExporter
-from .font_storage import FontStorage
 from .geom import *
 from .svg import Svg
 from .text_layout import TextLayout
@@ -558,6 +557,7 @@ class SVGExporter(BaseExporter):
     def export_define_sprite(self, tag, parent=None):
         id = "c%d"%tag.characterId
         g = self._e.g(id=id)
+        g.set("data-type", "sprite")
         self.defs.append(g)
         self.clip_depth = 0
         super(SVGExporter, self).export_define_sprite(tag, g)
@@ -568,24 +568,39 @@ class SVGExporter(BaseExporter):
     def export_define_text(self, tag: TagDefineText) -> None:
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
         g.set("data-type", "text")
-        if len(tag.records) > 0:
-            font_size = min(r.textHeight for r in tag.records) / PIXELS_PER_TWIP
-            g.set("data-font_size_min", str(font_size))
+        g.set("data-bounds", self.serialize_bounds(tag.textBounds))
 
-        x = xmin = tag.textBounds.xmin/PIXELS_PER_TWIP
-        y = ymin = tag.textBounds.ymin/PIXELS_PER_TWIP
+        assert tag.textMatrix.scaleX == 1
+        assert tag.textMatrix.rotateSkew0 == 0
+        assert tag.textMatrix.rotateSkew1 == 0
+        assert tag.textMatrix.scaleY == 1
+
+        font_sizes = set()
+        font_ids = set()
+
+        x = tag.textBounds.xmin/PIXELS_PER_TWIP
+        y = tag.textBounds.ymin/PIXELS_PER_TWIP
+
+        chars = []
 
         for rec in tag.records:
-            if rec.hasXOffset:
-                x = xmin + rec.xOffset/PIXELS_PER_TWIP
-            if rec.hasYOffset:
-                y = ymin + rec.yOffset/PIXELS_PER_TWIP
-
             size = rec.textHeight/PIXELS_PER_TWIP
+            font_sizes.add(size)
+            font_ids.add(rec.fontId)
 
+            if rec.hasXOffset:
+                x = (rec.xOffset + tag.textMatrix.translateX) / PIXELS_PER_TWIP
+            if rec.hasYOffset:
+                y = (rec.yOffset + tag.textMatrix.translateY) / PIXELS_PER_TWIP
             for glyph in rec.glyphEntries:
                 use = self._e.use()
                 use.set(Svg.xlink_prefix("href"), "#font_{0}_{1}".format(rec.fontId, glyph.index))
+
+                font = self.fonts.get(rec.fontId)
+                if isinstance(font, TagDefineFont2):
+                    chars.append(chr(font.codeTable[glyph.index]))
+                else:
+                    chars.append('�')
 
                 use.set(
                     'transform',
@@ -599,13 +614,29 @@ class SVGExporter(BaseExporter):
 
                 x = x + float(glyph.advance)/PIXELS_PER_TWIP
 
+        if len(font_sizes) == 1:
+            font_size = next(iter(font_sizes))
+            g.set("data-font_size", str(font_size))
+        elif len(font_sizes) > 1:
+            font_size_min = min(font_sizes)
+            font_size_max = max(font_sizes)
+            g.set("data-font_size_min", str(font_size_min))
+            g.set("data-font_size_max", str(font_size_max))
+        if len(font_ids) == 1:
+            font_id = next(iter(font_ids))
+            font = self.fonts.get(font_id)
+            if isinstance(font, TagDefineFont2):
+                g.set("data-font_name", font.fontName or '')
+        g.set("data-text", "".join(chars))
         self.defs.append(g)
 
     def export_define_edit_text(self, tag: TagDefineEditText) -> None:
         g = self._e.g(id="c{0}".format(int(tag.characterId)))
         g.set("data-type", "edit_text")
+        g.set("data-bounds", self.serialize_bounds(tag.bounds))
 
         text, font_size = self._extract_text_and_font_size(tag)
+        g.set("data-text", text or "")
         g.set("data-font_size", str(font_size))
 
         if tag.hasLayout:
@@ -619,6 +650,7 @@ class SVGExporter(BaseExporter):
             text_color = 255 << 24
 
         font = self.fonts[tag.fontId]
+        g.set("data-font_name", font.fontName or '')
         layout = TextLayout(font)
         for char_in_layout in layout.layout_text(text, font_size, align, tag.bounds):
             index = self._font_exporter.export_glyph_by_code(font, char_in_layout.code)
@@ -668,6 +700,7 @@ class SVGExporter(BaseExporter):
         shape = self.shape_exporter.g
         shape.set("id", "c%d" % tag.characterId)
         shape.set("data-type", "shape")
+        shape.set("data-bounds", self.serialize_bounds(tag.shape_bounds))
         self.defs.append(shape)
 
     def export_display_list_item(self, tag, parent=None):
@@ -817,6 +850,15 @@ class SVGExporter(BaseExporter):
             img.set("height", "%s" % str(image.size[1]))
             img.set(Svg.xlink_prefix("href"), "%s" % data_url)
             self.defs.append(img)
+
+    @staticmethod
+    def serialize_bounds(bounds):
+        return '{} {} {} {}'.format(
+            bounds.xmin / PIXELS_PER_TWIP,
+            bounds.ymin / PIXELS_PER_TWIP,
+            bounds.xmax / PIXELS_PER_TWIP,
+            bounds.ymax / PIXELS_PER_TWIP
+        )
 
 
 class SingleShapeSVGExporterMixin(object):

@@ -63,8 +63,6 @@ class GlyphExporter:
 
     def export_glyph(self, index: int, glyph: SWFShape) -> None:
         glyph_elem = self.glyph_to_elem(glyph)
-        if glyph_elem is None:
-            return
         self._add_glyph_element(index, glyph_elem)
         self._next_glyph_index = max(self._next_glyph_index, index + 1)
 
@@ -87,12 +85,12 @@ class GlyphExporter:
         glyph_elem.set('transform', 'scale({0})'.format(float(1) / EM_SQUARE_LENGTH))
         self._font_elem.append(glyph_elem)
 
-    @staticmethod
-    def glyph_to_elem(glyph: SWFShape) -> Optional[ObjectifiedElement]:
+    def glyph_to_elem(self, glyph: SWFShape) -> Optional[ObjectifiedElement]:
         path_group = glyph.export().g.getchildren()
-        if len(path_group) == 0:
-            return None
-        path = path_group[0]
-        del path.attrib['stroke']
-        del path.attrib['fill']
+        if len(path_group) > 0:
+            path = path_group[0]
+            del path.attrib['stroke']
+            del path.attrib['fill']
+        else:
+            path = self._e.path(d='')
         return path

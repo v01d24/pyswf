@@ -116,14 +116,12 @@ class TextLayout:
                      bounds_width: int) -> List[CharInLayout]:
         line_chars = []
         line_width = self._measure_text(line, font_size)
-        if align == self.ALIGN_LEFT:
-            x_offset = 0
-        elif align == self.ALIGN_CENTER:
+        if align == self.ALIGN_CENTER:
             x_offset = (bounds_width - line_width) / 2
         elif align == self.ALIGN_RIGHT:
             x_offset = bounds_width - line_width
         else:
-            x_offset = (bounds_width - line_width) / 2
+            x_offset = 0
         x += 2 * PIXELS_PER_TWIP + x_offset
         y += font_size * PIXELS_PER_TWIP
         for c in line:

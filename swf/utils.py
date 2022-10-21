@@ -54,3 +54,9 @@ class ImageUtils(object):
                 image_type = BitmapType.GIF89A
         data.seek(pos)
         return image_type
+
+
+class StringUtils:
+    @staticmethod
+    def is_empty(s):
+        return s in (None, '')

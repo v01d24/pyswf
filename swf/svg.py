@@ -8,7 +8,7 @@ class Svg:
     NS = {'svg': SVG_NS, 'xlink': XLINK_NS}
 
     @classmethod
-    def create_element_maker(cls):
+    def create_element_maker(cls) -> ElementMaker:
         return ElementMaker(annotate=False,
                             namespace=cls.SVG_NS,
                             nsmap={None: cls.SVG_NS, 'xlink': cls.XLINK_NS})
