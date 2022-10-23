@@ -1,6 +1,6 @@
 from typing import Optional, Dict
 
-from lxml.objectify import ObjectifiedElement
+from lxml.objectify import ObjectifiedElement, ElementMaker
 
 from swf.consts import EM_SQUARE_LENGTH
 from swf.data import SWFShape
@@ -62,7 +62,7 @@ class GlyphExporter:
         self._next_glyph_index = 0
 
     def export_glyph(self, index: int, glyph: SWFShape) -> None:
-        glyph_elem = self.glyph_to_elem(glyph)
+        glyph_elem = self.glyph_to_elem(glyph, self._e)
         self._add_glyph_element(index, glyph_elem)
         self._next_glyph_index = max(self._next_glyph_index, index + 1)
 
@@ -85,12 +85,13 @@ class GlyphExporter:
         glyph_elem.set('transform', 'scale({0})'.format(float(1) / EM_SQUARE_LENGTH))
         self._font_elem.append(glyph_elem)
 
-    def glyph_to_elem(self, glyph: SWFShape) -> Optional[ObjectifiedElement]:
+    @staticmethod
+    def glyph_to_elem(glyph: SWFShape, element_maker: ElementMaker) -> Optional[ObjectifiedElement]:
         path_group = glyph.export().g.getchildren()
         if len(path_group) > 0:
             path = path_group[0]
             del path.attrib['stroke']
             del path.attrib['fill']
         else:
-            path = self._e.path(d='')
+            path = element_maker.path(d='')
         return path

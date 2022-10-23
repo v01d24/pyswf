@@ -3,6 +3,7 @@ import traceback
 
 from swf.font_exporter import GlyphExporter
 from swf.font_storage import FontStorage
+from swf.svg import Svg
 from swf.tag import TagDefineFont2
 from swf.movie import SWF
 from arg_utils import add_source_args, get_source_paths
@@ -11,6 +12,7 @@ from arg_utils import add_source_args, get_source_paths
 class FontExtractor(object):
     def __init__(self, font_storage):
         self._font_storage = font_storage
+        self._e = Svg.create_element_maker()
 
     def extract_fonts(self, file_path):
         with open(file_path, 'rb') as f:
@@ -24,7 +26,7 @@ class FontExtractor(object):
         for code, glyph in zip(font_tag.codeTable, font_tag.glyphShapeTable):
             if font.has_glyph(code):
                 continue
-            elem = GlyphExporter.glyph_to_elem(glyph)
+            elem = GlyphExporter.glyph_to_elem(glyph, self._e)
             if elem is not None:
                 font.add_glyph(code, elem)
         if font_tag.hasLayout:
