@@ -44,8 +44,8 @@ class TextLayout:
         if font_tag.hasLayout:
             codes_with_advances = zip(font_tag.codeTable, font_tag.fontAdvanceTable)
             self._advances = {c: a / EM_SQUARE_LENGTH for c, a in codes_with_advances}
-            self._min_advance = min(self._advances)
-            self._max_advance = max(self._advances)
+            self._min_advance = min(self._advances.values())
+            self._max_advance = max(self._advances.values())
         else:
             self._advances = {}
             self._min_advance = self.DEFAULT_ADVANCE
@@ -148,7 +148,10 @@ class TextLayout:
             advance = self._min_advance
         else:
             code = ord(c)
-            advance = self._advances.get(code, self._max_advance)
+            # у цифр и букв ширина минимальная и равна половине размера шрифта
+            # у иероглифов ширина максимальная и равна размеру шрифта
+            default_advance = self._min_advance if code < 256 else self._max_advance
+            advance = self._advances.get(code, default_advance)
             if code == 215 and advance == 10:
                 advance = 20
         return advance * font_size
